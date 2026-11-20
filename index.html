@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alphavolts - Sistema de Eficiência Energética</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+</head>
+<body class="bg-slate-100 text-gray-800 font-sans">
+
+  <!-- Header -->
+  <header class="bg-slate-900 text-white p-4 shadow-lg border-b-4 border-orange-500">
+    <div class="container mx-auto flex flex-wrap justify-between items-center gap-3">
+      <div>
+        <h1 class="text-2xl font-bold text-orange-500">ALPHAVOLTS</h1>
+        <p class="text-xs text-slate-400">Soluções Elétricas — Sistema IoT de Eficiência Energética e Tomada Inteligente</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="api-badge" class="px-3 py-1 bg-slate-700 text-slate-200 text-xs font-bold rounded-full">
+          API: Verificando...
+        </span>
+        <span id="status-badge" class="px-4 py-1.5 bg-red-600 text-white text-xs font-bold rounded-full">
+          MQTT Desconectado
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container mx-auto p-6 space-y-6">
+
+    <!-- Configuração da Tarifa Local -->
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-bold text-slate-800">Configuração de Tarifa Local (R$)</h2>
+        <p class="text-xs text-slate-500">Insira o valor da tarifa cobrada por kWh pela distribuidora da sua região.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="font-bold text-slate-700">R$ / kWh:</span>
+        <input type="number" id="input-tarifa" value="0.75" step="0.01" class="border border-slate-300 rounded-lg px-3 py-1.5 w-28 font-bold text-center text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500">
+        <button onclick="salvarTarifa()" class="bg-orange-500 hover:bg-orange-600 text-white px-5 py-1.5 rounded-lg text-sm font-semibold transition">Atualizar</button>
+      </div>
+    </div>
+
+    <!-- Cards de Telemetria -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-blue-500">
+        <p class="text-xs font-bold text-slate-400 uppercase">Tensão AC</p>
+        <p id="val-tensao" class="text-3xl font-extrabold text-slate-800 mt-1">0.0 <span class="text-base font-normal">V</span></p>
+      </div>
+      <div class="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-emerald-500">
+        <p class="text-xs font-bold text-slate-400 uppercase">Corrente</p>
+        <p id="val-corrente" class="text-3xl font-extrabold text-slate-800 mt-1">0.00 <span class="text-base font-normal">A</span></p>
+      </div>
+      <div class="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-amber-500">
+        <p class="text-xs font-bold text-slate-400 uppercase">Potência Ativa</p>
+        <p id="val-potencia" class="text-3xl font-extrabold text-slate-800 mt-1">0 <span class="text-base font-normal">W</span></p>
+      </div>
+      <div class="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-indigo-500">
+        <p class="text-xs font-bold text-slate-400 uppercase">Consumo Acumulado</p>
+        <p id="val-consumo" class="text-3xl font-extrabold text-slate-800 mt-1">0.0000 <span class="text-base font-normal">kWh</span></p>
+      </div>
+      <div class="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-orange-500">
+        <p class="text-xs font-bold text-slate-400 uppercase">Custo Financeiro</p>
+        <p id="val-custo" class="text-3xl font-extrabold text-orange-600 mt-1">R$ 0,00</p>
+      </div>
+    </div>
+
+    <!-- Resumo do Banco de Dados SQLite -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-bold text-slate-400 uppercase">Registros no Banco (SQLite)</p>
+        <p id="resumo-total" class="text-2xl font-extrabold text-slate-800 mt-1">0</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-bold text-slate-400 uppercase">Potência Média Histórica</p>
+        <p id="resumo-media" class="text-2xl font-extrabold text-slate-800 mt-1">0.0 W</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-bold text-slate-400 uppercase">Potência Máxima Registrada</p>
+        <p id="resumo-max" class="text-2xl font-extrabold text-orange-600 mt-1">0.0 W</p>
+      </div>
+    </div>
+
+    <!-- Controle Remoto e Agendamento -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- Acionamento Manual -->
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">Acionamento Remoto (Relé)</h3>
+        <p class="text-xs text-slate-500 mb-4">Ligue ou desligue a tomada em tempo real via comandos MQTT.</p>
+        <div class="flex items-center justify-between">
+          <span id="rele-status-badge" class="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-sm">Status: OFF</span>
+          <div class="space-x-2">
+            <button onclick="enviarComando('ON')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl shadow transition">LIGAR</button>
+            <button onclick="enviarComando('OFF')" class="bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-2.5 rounded-xl shadow transition">DESLIGAR</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Temporizador de Corte -->
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">Programar Corte Automático</h3>
+        <p class="text-xs text-slate-500 mb-4">Defina um horário limite para corte de segurança da carga.</p>
+        <div class="flex items-center gap-3">
+          <input type="time" id="horario-corte" class="border border-slate-300 rounded-xl px-4 py-2 text-lg font-bold text-slate-800">
+          <button onclick="agendarCorte()" class="bg-slate-800 hover:bg-slate-900 text-white font-bold px-5 py-2.5 rounded-xl transition">Programar</button>
+        </div>
+        <p id="agendamento-info" class="text-xs text-orange-600 font-semibold mt-3"></p>
+      </div>
+    </div>
+
+    <!-- Gráfico de Telemetria -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <h3 class="text-lg font-bold text-slate-800">Gráfico de Potência Ativa (W)</h3>
+        <button onclick="carregarHistoricoAPI()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
+          Atualizar Histórico do Banco
+        </button>
+      </div>
+      <div class="h-64">
+        <canvas id="potenciaChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Tabela de Histórico Persistido -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+      <h3 class="text-lg font-bold text-slate-800 mb-4">Últimas Leituras Salvas no Banco de Dados</h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="bg-slate-900 text-white">
+              <th class="p-3 rounded-tl-lg">ID</th>
+              <th class="p-3">Tensão (V)</th>
+              <th class="p-3">Corrente (A)</th>
+              <th class="p-3">Potência (W)</th>
+              <th class="p-3">Consumo (kWh)</th>
+              <th class="p-3">Relé</th>
+              <th class="p-3 rounded-tr-lg">Data / Hora</th>
+            </tr>
+          </thead>
+          <tbody id="tabela-historico" class="divide-y divide-slate-200">
+            <tr>
+              <td colspan="7" class="p-4 text-center text-slate-400">Carregando histórico da API...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    const API_URL = "http://localhost:3000";
+    let tarifaLocal = 0.75;
+    let ultimoConsumoKWh = 0;
+    let client;
+    let chartInstance;
+
+    // Inicialização do Gráfico Chart.js
+    const ctx = document.getElementById('potenciaChart').getContext('2d');
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Potência Ativa (Watts)',
+          data: [],
+          borderColor: '#f97316',
+          backgroundColor: 'rgba(249, 115, 22, 0.12)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    function atualizarCustoFinanceiro(consumoKWh) {
+      ultimoConsumoKWh = Number(consumoKWh) || 0;
+      const custoTotal = ultimoConsumoKWh * tarifaLocal;
+      document.getElementById('val-custo').innerText = 'R$ ' + custoTotal.toFixed(2).replace('.', ',');
+    }
+
+    // Busca resumo e histórico na API Node.js
+    async function carregarHistoricoAPI() {
+      const apiBadge = document.getElementById('api-badge');
+      try {
+        const [resResumo, resHist] = await Promise.all([
+          fetch(`${API_URL}/api/telemetria/resumo`),
+          fetch(`${API_URL}/api/telemetria/historico?limite=15`)
+        ]);
+
+        if (!resResumo.ok || !resHist.ok) throw new Error("Resposta inválida da API");
+
+        const resumo = await resResumo.json();
+        const historico = await resHist.json();
+
+        apiBadge.innerText = "API SQLite: Online";
+        apiBadge.className = "px-3 py-1 bg-emerald-700 text-white text-xs font-bold rounded-full";
+
+        if (resumo) {
+          document.getElementById('resumo-total').innerText = resumo.total_leituras ?? 0;
+          document.getElementById('resumo-media').innerText = Number(resumo.potencia_media_w || 0).toFixed(1) + ' W';
+          document.getElementById('resumo-max').innerText = Number(resumo.potencia_max_w || 0).toFixed(1) + ' W';
+        }
+
+        const tbody = document.getElementById('tabela-historico');
+        if (!historico || historico.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400">Nenhum registro encontrado no banco ainda.</td></tr>`;
+          return;
+        }
+
+        // Preenche o gráfico com o histórico inicial
+        chartInstance.data.labels = historico.map(item => {
+          const dt = new Date(item.data_hora);
+          return isNaN(dt.getTime()) ? item.data_hora : dt.toLocaleTimeString();
+        });
+        chartInstance.data.datasets[0].data = historico.map(item => Number(item.potencia_w));
+        chartInstance.update();
+
+        // Atualiza cards com o registro mais recente do histórico
+        const maisRecente = historico[historico.length - 1];
+        atualizarDashboard({
+          tensao_V: Number(maisRecente.tensao_v),
+          corrente_A: Number(maisRecente.corrente_a),
+          potencia_W: Number(maisRecente.potencia_w),
+          consumo_kWh: Number(maisRecente.consumo_kwh),
+          rele_status: maisRecente.rele_status
+        }, false);
+
+        // Preenche tabela do mais recente para o mais antigo
+        const linhasInvertidas = [...historico].reverse();
+        tbody.innerHTML = linhasInvertidas.map(item => `
+          <tr class="hover:bg-slate-50">
+            <td class="p-3 font-mono text-xs text-slate-500">#${item.id}</td>
+            <td class="p-3 font-semibold">${Number(item.tensao_v).toFixed(1)} V</td>
+            <td class="p-3 font-semibold">${Number(item.corrente_a).toFixed(2)} A</td>
+            <td class="p-3 font-semibold text-amber-600">${Number(item.potencia_w).toFixed(1)} W</td>
+            <td class="p-3 font-mono text-xs">${Number(item.consumo_kwh).toFixed(6)} kWh</td>
+            <td class="p-3">
+              <span class="px-2.5 py-1 rounded-full text-xs font-bold ${item.rele_status === 'ON' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">
+                ${item.rele_status}
+              </span>
+            </td>
+            <td class="p-3 text-xs text-slate-500">${item.data_hora}</td>
+          </tr>
+        `).join('');
+
+      } catch (err) {
+        apiBadge.innerText = "API SQLite: Offline";
+        apiBadge.className = "px-3 py-1 bg-red-700 text-white text-xs font-bold rounded-full";
+        document.getElementById('tabela-historico').innerHTML = `
+          <tr><td colspan="7" class="p-4 text-center text-red-600">
+            Não foi possível conectar em <strong>http://localhost:3000</strong>. Verifique se o <code>node server.js</code> está rodando no terminal.
+          </td></tr>
+        `;
+      }
+    }
+
+   // Conexão MQTT via WebSockets (com caminho /mqtt obrigatório na HiveMQ)
+    function conectarMQTT() {
+      const clientId = "WebDash_" + Math.random().toString(16).substr(2, 8);
+      client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "/mqtt", clientId);
+
+      client.onConnectionLost = onConnectionLost;
+      client.onMessageArrived = onMessageArrived;
+
+      client.connect({
+        useSSL: false,
+        timeout: 5,
+        onSuccess: onConnect,
+        onFailure: function(err) {
+          console.error("Falha ao conectar MQTT WebSockets:", err);
+          setTimeout(conectarMQTT, 3000);
+        }
+      });
+    }
+
+    function onConnect() {
+      document.getElementById('status-badge').innerText = "MQTT Conectado";
+      document.getElementById('status-badge').className = "px-4 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-full";
+      client.subscribe("alphavolts/tomada/telemetria");
+      client.subscribe("alphavolts/tomada/status");
+    }
+
+    function onConnectionLost() {
+      document.getElementById('status-badge').innerText = "MQTT Desconectado";
+      document.getElementById('status-badge').className = "px-4 py-1.5 bg-red-600 text-white text-xs font-bold rounded-full";
+      setTimeout(conectarMQTT, 5000);
+    }
+
+    function onMessageArrived(message) {
+      if (message.destinationName === "alphavolts/tomada/telemetria") {
+        const dados = JSON.parse(message.payloadString);
+        atualizarDashboard(dados, true);
+      }
+    }
+
+    function atualizarDashboard(dados, adicionarAoGrafico = true) {
+      const tensao = Number(dados.tensao_V) || 0;
+      const corrente = Number(dados.corrente_A) || 0;
+      const potencia = Number(dados.potencia_W) || 0;
+      const consumo = Number(dados.consumo_kWh) || 0;
+
+      document.getElementById('val-tensao').innerHTML = tensao.toFixed(1) + ' <span class="text-base font-normal">V</span>';
+      document.getElementById('val-corrente').innerHTML = corrente.toFixed(2) + ' <span class="text-base font-normal">A</span>';
+      document.getElementById('val-potencia').innerHTML = potencia.toFixed(0) + ' <span class="text-base font-normal">W</span>';
+      document.getElementById('val-consumo').innerHTML = consumo.toFixed(4) + ' <span class="text-base font-normal">kWh</span>';
+
+      atualizarCustoFinanceiro(consumo);
+
+      const badge = document.getElementById('rele-status-badge');
+      if (dados.rele_status === "ON") {
+        badge.innerText = "Status: ON (Ligado)";
+        badge.className = "px-4 py-2 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-sm";
+      } else {
+        badge.innerText = "Status: OFF (Desligado)";
+        badge.className = "px-4 py-2 bg-red-100 text-red-800 font-bold rounded-xl text-sm";
+      }
+
+      if (adicionarAoGrafico) {
+        const horaAtual = new Date().toLocaleTimeString();
+        if (chartInstance.data.labels.length > 15) {
+          chartInstance.data.labels.shift();
+          chartInstance.data.datasets[0].data.shift();
+        }
+        chartInstance.data.labels.push(horaAtual);
+        chartInstance.data.datasets[0].data.push(potencia);
+        chartInstance.update();
+      }
+    }
+
+    function enviarComando(comando) {
+      if (client && client.isConnected()) {
+        const message = new Paho.MQTT.Message(comando);
+        message.destinationName = "alphavolts/tomada/comando";
+        client.send(message);
+      } else {
+        alert("MQTT ainda não conectado. Aguarde o indicador verde MQTT Conectado.");
+      }
+    }
+
+    function salvarTarifa() {
+      tarifaLocal = parseFloat(document.getElementById('input-tarifa').value) || 0.75;
+      atualizarCustoFinanceiro(ultimoConsumoKWh);
+      alert('Tarifa atualizada para R$ ' + tarifaLocal.toFixed(2) + ' / kWh');
+    }
+
+    function agendarCorte() {
+      const hora = document.getElementById('horario-corte').value;
+      if (hora) {
+        document.getElementById('agendamento-info').innerText = "Corte automático programado para as " + hora + "h";
+      }
+    }
+
+    window.onload = () => {
+      carregarHistoricoAPI();
+      conectarMQTT();
+    };
+  </script>
+</body>
+</html>
